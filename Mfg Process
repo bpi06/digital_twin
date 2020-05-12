@@ -1,0 +1,351 @@
+
+import csv
+import os
+import io
+from collections import OrderedDict
+import time
+import json
+
+global opMap
+global opNamesList
+global partsMap
+global partsNamesList
+global dayNumber
+global currentTimeConsumed
+global currentOpNumber
+global timeAlloted
+global opPartsMap
+
+# Data structures
+opNamesList = []
+opMap = {}
+partsMap = {}
+partsNamesList = []
+
+dayNumber = 0
+currentTimeConsumed = 0
+currentOpNumber = 1
+timeAlloted = 1
+opPartsMap = {}
+top5items = {}
+
+FPYConstMultipier = 0.9
+TimeConstMultiplier = 0.9
+Threshold = 0.30
+
+
+def BuildOpPartsMapandOpList(fileName):
+    with io.open(fileName) as inptPartsFile:
+        for sentence in inptPartsFile:
+            words = sentence.split("|")
+            opName = words[0]
+            arrParts = words[1].strip().split(" ")
+            opPartsMap[opName] = arrParts
+            opNamesList.append(opName)
+
+def BuildOpMapandPartsMapwithList(fileName):
+    with open(fileName) as csv_file:
+        csv_reader = csv.reader(csv_file, delimiter=',')
+        line_count = 0
+        for row in csv_reader:
+            # print(row)
+            if( row[0] == 'Z'):
+                continue
+            if line_count == 0:
+                # print(f'Column names are {", ".join(row)}')
+                line_count += 1
+            else:
+                amount = row[1]
+                time = row[2]
+                fpy = row[3]
+                if amount == '':
+                    # print(time , fpy)
+                    op_config = []
+                    op_config.append(float(row[2]))
+                    op_config.append(float(row[3]))
+                    opMap[row[0]] = op_config
+                else:
+                    # print(amount)
+                    parts_config = []
+                    parts_config.append(float(row[1]))
+                    partsMap[row[0]] = parts_config
+                    partsNamesList.append(row[0])
+
+                line_count += 1
+        dummy = []
+        dummy.append(0)
+        dummy.append(0)
+        opMap['Z'] = dummy
+        # print(f'Processed {line_count} lines.')
+
+def RunGenericDay():
+
+    global dayNumber
+    global currentOpNumber
+    global currentTimeConsumed
+
+    dayNumber = dayNumber + 1
+
+
+    timeConsumed = currentTimeConsumed;
+    #console.log(opMap.get("op70"))
+    finishedUptoX = currentOpNumber
+    # print( "current op Number " + str(currentOpNumber))
+
+    #console.log("Current op " + currentOpNumber)
+    # print("current time " + str(currentTimeConsumed) + " current Time alloted " + str(timeAlloted))
+
+    for itr in range(currentOpNumber, len(opNamesList)):
+        getOpName = opNamesList[itr]
+        getOpConfig = opMap[getOpName]
+
+
+        # print(getOpName)
+        # print(getOpConfig)
+        if (timeConsumed + getOpConfig[0] > timeAlloted):
+            finishedUptoX = itr - 1
+            print("\tFinished upto Op ", opNamesList[finishedUptoX])
+            print("\tTotal time consumed ", timeConsumed)
+            print("\tNow closing this iteration")
+            time.sleep(2)
+            # print("break")
+            break
+        else:
+            # print("going")
+            if getOpName in afterRecoOpConfig:
+                print("\tWe found a match from our previous recommendations! -> ", getOpName)
+                time.sleep(1)
+                # print(getOpName)
+                print("\tCurrent Config ", getOpConfig)
+                # time.sleep(0.5)
+                print("\tPredicted Config ", afterRecoOpConfig[getOpName][0])
+
+                diff = abs(getOpConfig[0] - afterRecoOpConfig[getOpName][0][0]) + abs(
+                    getOpConfig[1] - afterRecoOpConfig[getOpName][0][1])
+                if diff < Threshold:
+                    time.sleep(1)
+                    print("\tDifference ", diff)
+                    print("\tPushing recommendation ", afterRecoOpConfig[getOpName][1], " to the top")
+                    time.sleep(1)
+                    # defaultRecosDict[afterRecoOpConfig[getOpName][1]] += 1
+                    print("\tPrinting new recommendation list")
+                    time.sleep(1)
+                    getNewRecoForThisOp = LoadRecoFromJsonFile(getOpName)
+                    if afterRecoOpConfig[getOpName][1] in getNewRecoForThisOp:
+                        getNewRecoForThisOp[afterRecoOpConfig[getOpName][1]] += 1
+                    else:
+                        getNewRecoForThisOp[afterRecoOpConfig[getOpName][1]] = 1
+                    recoSorted = OrderedDict(sorted(getNewRecoForThisOp.items(), key=lambda x: x[1], reverse=True))
+                    SaveRecoToJsonFile(getOpName, recoSorted)
+
+                else:
+                    del afterRecoOpConfig[getOpName]
+
+            currentOpNumber = itr
+            timeConsumed = timeConsumed + getOpConfig[0]
+            getPartsArray = []
+            getPartsArray = opPartsMap[getOpName]
+            partsValueArray = []
+            # print( getPartsArray)
+            for ind in range(0, len(getPartsArray)):
+                # print( getPartsArray[ind])
+                get_part_config = partsMap[getPartsArray[ind]]
+                # print( get_part_config )
+                partsValueArray.append(get_part_config[0])
+            argMinIndex = partsValueArray.index(min( partsValueArray))
+            # print( argMinIndex )
+            new_op_output = []
+            # console.log(argMinIndex)
+            new_op_output.append(partsValueArray[argMinIndex] * getOpConfig[1])
+            partsMap[getOpName] = new_op_output
+            # console.log(PartsMap.get(getOpName));
+            # print(partsMap[getOpName])
+
+    currentTimeConsumed = timeConsumed
+
+def ShowWorstTable(top5items):
+    print("-" * 70)
+    print("\tWorst 5 Ops")
+    print("-" * 70)
+    print("\tID\tOp Name  TIME \t FPY\n")
+    idx = 1
+    for (key, val) in top5items:
+        print("\t", idx, "\t", key, "\t", val[0], "\t", val[1])
+        idx += 1
+
+def BuildWorstOps(number):
+    futureOpList = {}
+    for itr in range(currentOpNumber, len(opNamesList)):
+        getOpName = opNamesList[itr]
+        getOpConfig = opMap[getOpName]
+
+        # print(getOpName)
+        # print(getOpConfig)
+        futureOpList[getOpName] = getOpConfig
+
+    # print(futureOpList)
+
+    global sortedOps
+    orderedOps = sorted(futureOpList.items(), key=lambda item : item[1][0] * item[1][0] + item[1][1] * item[1][1], reverse=True)
+    # print(orderedOps)
+
+    global top5items
+    top5items = orderedOps[:5]
+
+    ShowWorstTable(top5items)
+
+
+defaultRecosDict = {"Add an additional machine" :0,
+"Add more human resources":0,
+"Improve process yield":0,
+"Investigate further":0,
+"Add fixture & tools":0,
+"Improve training":0,
+"Collect more data to analyze":0,
+"Standardize the work procedure":0,
+"Strngthen supplier base":0,
+"Find alternative material":0,
+"Collect feedback from worker":0,
+"Automate the process":0,
+"Supervise the process":0,
+"Perform preventive maintenance":0
+                    }
+
+afterRecoOpConfig = {}
+
+def ShowRecoList(filename):
+    id = 1
+    recosDict = LoadRecoFromJsonFile(filename)
+
+    recoSorted = OrderedDict(sorted(recosDict.items(), key=lambda x: x[1], reverse=True))
+    # print(recoSorted)
+    recos = list(recoSorted.keys())
+    for item in recos:
+        print("\t ", id ,". ", item)
+        id+=1
+    return recoSorted
+
+
+def ApplyRecommendation():
+    global top5items
+
+    while(1):
+        print("\tDo you want to keep applying recommendations?\n\t1.Yes, 2.No")
+        userChoice = input("\t")
+        # print(userChoice)
+        if userChoice == "1":
+            ShowWorstTable(top5items=top5items)
+            # print("\tChoose one (by ID number)")
+            opChoice = input("\tChoose one (by ID number) : ")
+            print("\tYou have selected ", opChoice, "\t", top5items[int(opChoice) - 1])
+
+            print("\tShowing list \n")
+
+            loadedRecoDict = ShowRecoList(filename=top5items[int(opChoice)-1][0])
+            print("\t X. I Will Enter Recommendation Manually (Type X to choose this option)")
+            # print(" ")
+
+            recos = list(OrderedDict(sorted(loadedRecoDict.items(), key=lambda x: x[1], reverse=True)).keys())
+            recoChoice = input("\tChoose one recommendation : (by ID) ")
+            if( recoChoice == "X"):
+                recoChoiceByUser = input("\t Enter Your Recommendation Here : ")
+                defaultRecosDict[recoChoiceByUser] = 0
+            else:
+                recoChoiceByUser = recos[int(recoChoice) - 1]
+
+            print("\tYou have selected recommendation ", recoChoice, "\t", recoChoiceByUser)
+
+            key = top5items[int(opChoice)-1][0]
+            # print(key)
+            val = top5items[int(opChoice)-1][1]
+            currentTime = val[0]
+            currentFpy = val[1]
+            currentTime = currentTime * TimeConstMultiplier
+            currentFpy = currentFpy * FPYConstMultipier
+            afterRecoOpConfig[key] = [[currentTime, currentFpy], recoChoiceByUser]
+            # print(afterRecoOpConfig[key])
+            print("\tFinished applying reco for op ", key)
+        else:
+            print("\tFinished taking recommendations. Now moving to next iteration")
+            break
+
+
+def SaveRecoToJsonFile(filename, dictToSave):
+    f = open("Reco/" + filename + ".json", 'w')
+    json.dump(dictToSave, f)
+    f.close()
+
+def LoadRecoFromJsonFile(filename):
+    filelocation = "Reco/" + filename + ".json"
+
+    print(filelocation)
+    try:
+
+        f = open("Reco/"+filename+".json")
+        print("File found")
+        loadedDict = json.load(f)
+        f.close()
+        return loadedDict
+    except:
+        dummy = 1
+        print("File not found")
+        return defaultRecosDict
+
+
+# Wait for 5 seconds
+print("Loading input files............")
+time.sleep(2)
+
+BuildOpPartsMapandOpList("input_final.txt")
+
+
+time.sleep(1)
+print("\tLoading Iterations")
+print("="*80)
+
+print("\tThis is iteration 1")
+BuildOpMapandPartsMapwithList("Day_1.csv")
+
+RunGenericDay()
+
+iterationId = 2
+while(1):
+    userchoice = input("\tDo you want to \t 1. Review, \t2. Continue Simulation without Review")
+
+    if (userchoice) == "1":
+        BuildWorstOps(5)
+        ApplyRecommendation()
+        time.sleep(2)
+        timeAlloted += 1
+
+        time.sleep(1)
+        print("\tLoading Iterations")
+        print("=" * 80)
+        print("\tThis is iteration " + str(iterationId))
+        try:
+            BuildOpMapandPartsMapwithList("Day_" + str(iterationId) + ".csv")
+        except:
+            print("No new input file found for iteration ", iterationId, ". So, going with the current data")
+        RunGenericDay()
+        iterationId += 1
+    else:
+        timeAlloted += 1
+
+        time.sleep(1)
+        print("\tLoading Iterations")
+        print("=" * 80)
+        print("\tThis is iteration "+str(iterationId))
+        try:
+            BuildOpMapandPartsMapwithList("Day_"+str(iterationId)+".csv")
+        except:
+            print("No new input file found for iteration ", iterationId, ". So, going with the current data")
+        RunGenericDay()
+        iterationId += 1
+
+
+
+### list
+# 1. one global list , specific order for each op
+# 2. program re open , keep the previous reco  for each op
+# 3. enter new recommendation by user
+# 4. new input file exist or not , if not then move with current one
